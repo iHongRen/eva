@@ -16,7 +16,7 @@ this_dir = Path(__file__).resolve().parent
 # LLM请求参数是按thinking模型设置的，所以请务必使用*thinking模型*，如deepseek-reasoner、Qwen3.5等
 VLLM_BASE_URL = "https://api.deepseek.com/v1"
 MODEL_NAME = "deepseek-reasoner"
-API_KEY = "sk-这里填你的deepseek API key"
+API_KEY = os.environ.get("EVA_API_KEY", "sk-这里填你的deepseek API key")
 
 
 def detect_model_len():
@@ -209,14 +209,11 @@ def clean_input(text):
 
 
 
-def llm_chat(messages, tools=None, temperature=0.6, thinking=True):
-    url = f"{VLLM_BASE_URL}/chat/completions"
-    headers = {"Authorization": f"Bearer {API_KEY}"}
-
+def _build_request_data(messages, tools=None, temperature=0.6, thinking=True, stream=False):
+    """构建 LLM 请求参数"""
     data = {
         "model": MODEL_NAME,
         "messages": messages,
-        # https://huggingface.co/Qwen/Qwen3.5-27B thinking coding agent推荐配置
         "temperature": temperature,
         "presence_penalty": 0.0,
         "repetition_penalty": 1.0,
@@ -227,6 +224,17 @@ def llm_chat(messages, tools=None, temperature=0.6, thinking=True):
     }
     if tools:
         data['tools'] = tools
+    if stream:
+        data['stream'] = True
+        data['stream_options'] = {"include_usage": True}
+    return data
+
+
+def llm_chat(messages, tools=None, temperature=0.6, thinking=True):
+    """非流式调用（用于安全审查等短请求）"""
+    url = f"{VLLM_BASE_URL}/chat/completions"
+    headers = {"Authorization": f"Bearer {API_KEY}"}
+    data = _build_request_data(messages, tools, temperature, thinking, stream=False)
 
     resp = requests.post(url, json=data, headers=headers)
     try:
@@ -238,6 +246,124 @@ def llm_chat(messages, tools=None, temperature=0.6, thinking=True):
         return out["choices"][0]["message"], out['usage']
     except Exception as e:
         raise Exception(f"LLM调用失败，错误信息：{e}, {out}")
+
+
+def llm_chat_stream(messages, tools=None, temperature=0.6, thinking=True):
+    """流式调用，逐 token 打印，返回与非流式相同格式的 (message, usage)"""
+    url = f"{VLLM_BASE_URL}/chat/completions"
+    headers = {"Authorization": f"Bearer {API_KEY}"}
+    data = _build_request_data(messages, tools, temperature, thinking, stream=True)
+
+    resp = requests.post(url, json=data, headers=headers, stream=True)
+    if resp.status_code != 200:
+        raise Exception(f"LLM调用失败，HTTP {resp.status_code}: {resp.text[:500]}")
+
+    # 累积变量
+    content_parts = []
+    reasoning_parts = []
+    tool_calls_map = {}  # index -> {id, type, function: {name, arguments}}
+    usage = None
+    role = "assistant"
+    is_first_content = True
+    is_thinking = False
+
+    try:
+        for raw_line in resp.iter_lines():
+            if not raw_line:
+                continue
+            line = raw_line.decode('utf-8', errors='replace')
+            if not line.startswith('data: '):
+                continue
+            payload = line[6:]
+            if payload.strip() == '[DONE]':
+                break
+
+            try:
+                chunk = json.loads(payload)
+            except json.JSONDecodeError:
+                continue
+
+            # 提取 usage（最后一个 chunk 带 usage）
+            if 'usage' in chunk and chunk['usage']:
+                usage = chunk['usage']
+
+            choices = chunk.get('choices', [])
+            if not choices:
+                continue
+
+            delta = choices[0].get('delta', {})
+            if not delta:
+                continue
+
+            if 'role' in delta:
+                role = delta['role']
+
+            # ---- reasoning / thinking 内容 ----
+            reasoning_content = delta.get('reasoning_content') or delta.get('reasoning') or ''
+            if reasoning_content:
+                if not is_thinking:
+                    is_thinking = True
+                    sys.stdout.write('\033[2m💭 ')  # 暗色显示思考过程
+                sys.stdout.write(reasoning_content)
+                sys.stdout.flush()
+                reasoning_parts.append(reasoning_content)
+
+            # ---- 正文内容 ----
+            text = delta.get('content') or ''
+            if text:
+                if is_thinking:
+                    is_thinking = False
+                    sys.stdout.write('\033[0m\n')  # 结束暗色
+                if is_first_content:
+                    is_first_content = False
+                sys.stdout.write(text)
+                sys.stdout.flush()
+                content_parts.append(text)
+
+            # ---- tool_calls 增量 ----
+            if 'tool_calls' in delta:
+                for tc_delta in delta['tool_calls']:
+                    idx = tc_delta.get('index', 0)
+                    if idx not in tool_calls_map:
+                        tool_calls_map[idx] = {
+                            'id': tc_delta.get('id', ''),
+                            'type': 'function',
+                            'function': {'name': '', 'arguments': ''}
+                        }
+                    tc_entry = tool_calls_map[idx]
+                    if tc_delta.get('id'):
+                        tc_entry['id'] = tc_delta['id']
+                    func_delta = tc_delta.get('function', {})
+                    if func_delta.get('name'):
+                        tc_entry['function']['name'] += func_delta['name']
+                    if func_delta.get('arguments'):
+                        tc_entry['function']['arguments'] += func_delta['arguments']
+
+        # 正常结束时重置颜色（Ctrl+C 时 finally 也会执行此逻辑）
+        if is_thinking:
+            sys.stdout.write('\033[0m\n')
+    finally:
+        # Ctrl+C 中断时也要重置颜色，避免终端保持暗色
+        if is_thinking:
+            sys.stdout.write('\033[0m\n')
+            sys.stdout.flush()
+
+    # 组装最终 message（与非流式返回格式一致）
+    full_content = ''.join(content_parts)
+    message = {
+        'role': role,
+        'content': full_content if full_content else None
+    }
+    if reasoning_parts:
+        message['reasoning_content'] = ''.join(reasoning_parts)
+    if tool_calls_map:
+        message['tool_calls'] = [tool_calls_map[i] for i in sorted(tool_calls_map.keys())]
+
+    # fallback usage
+    if usage is None:
+        usage = {'prompt_tokens': 0, 'completion_tokens': 0, 'total_tokens': 0}
+
+    return message, usage
 
 
 # ====================== 加载重要记忆线索 ======================
@@ -327,13 +453,17 @@ def agent_single_loop():
     break_loop = False
     while not break_loop:
         try:
+            sys.stdout.write("\n[*] EVA: ")
+            sys.stdout.flush()
             if COMPACT_PANIC == "on":
-                msg, usage = llm_chat(messages, tools=[run_cli_schema, memory_hints_schema])
+                msg, usage = llm_chat_stream(messages, tools=[run_cli_schema, memory_hints_schema])
             else:
-                msg, usage = llm_chat(messages, tools=[run_cli_schema])
+                msg, usage = llm_chat_stream(messages, tools=[run_cli_schema])
             messages.append(msg)
 
-            print(f"\n[*] EVA: {msg['content'].strip() if 'content' in msg and msg['content'] else ''}\n\n")
+            # 流式输出已经实时打印了内容，这里只需换行
+            sys.stdout.write("\n\n")
+            sys.stdout.flush()
 
             if not 'tool_calls' in msg or not msg['tool_calls']:
                 break
