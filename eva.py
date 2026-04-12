@@ -16,12 +16,12 @@ this_dir = Path(__file__).resolve().parent
 # LLM请求参数是按thinking模型设置的，所以请务必使用*thinking模型*，如deepseek-reasoner、Qwen3.5等
 VLLM_BASE_URL = "https://api.deepseek.com/v1"
 MODEL_NAME = "deepseek-reasoner"
-API_KEY = os.environ.get("EVA_API_KEY", "sk-这里填你的deepseek API key")
+EVA_API_KEY = os.environ.get("EVA_API_KEY", "sk-这里填你的deepseek API key")
 
 
 def detect_model_len():
     url = f"{VLLM_BASE_URL}/models"
-    headers = {"Authorization": f"Bearer {API_KEY}"}
+    headers = {"Authorization": f"Bearer {EVA_API_KEY}"}
 
     resp = requests.get(url, headers=headers)
     out = resp.json()
@@ -233,7 +233,7 @@ def _build_request_data(messages, tools=None, temperature=0.6, thinking=True, st
 def llm_chat(messages, tools=None, temperature=0.6, thinking=True):
     """非流式调用（用于安全审查等短请求）"""
     url = f"{VLLM_BASE_URL}/chat/completions"
-    headers = {"Authorization": f"Bearer {API_KEY}"}
+    headers = {"Authorization": f"Bearer {EVA_API_KEY}"}
     data = _build_request_data(messages, tools, temperature, thinking, stream=False)
 
     resp = requests.post(url, json=data, headers=headers)
@@ -251,7 +251,7 @@ def llm_chat(messages, tools=None, temperature=0.6, thinking=True):
 def llm_chat_stream(messages, tools=None, temperature=0.6, thinking=True):
     """流式调用，逐 token 打印，返回与非流式相同格式的 (message, usage)"""
     url = f"{VLLM_BASE_URL}/chat/completions"
-    headers = {"Authorization": f"Bearer {API_KEY}"}
+    headers = {"Authorization": f"Bearer {EVA_API_KEY}"}
     data = _build_request_data(messages, tools, temperature, thinking, stream=True)
 
     resp = requests.post(url, json=data, headers=headers, stream=True)
