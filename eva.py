@@ -21,8 +21,20 @@ EVA_API_KEY = os.environ.get("EVA_API_KEY", "sk-这里填你的deepseek API key"
 def detect_model_len():
     url = f"{EVA_BASE_URL}/models"
     headers = {"Authorization": f"Bearer {EVA_API_KEY}"}
-
-    resp = requests.get(url, headers=headers)
+    try:
+        resp = requests.get(url, headers=headers, timeout=10)
+    except UnicodeEncodeError:
+        print(f"错误：EVA_API_KEY ({EVA_API_KEY}) 包含非法字符，请检查 EVA_API_KEY 配置。")
+        sys.exit(1)
+    except Exception as e:
+        print(f"错误：无法连接到 {EVA_BASE_URL}，请检查 EVA_BASE_URL 配置。\n详情：{e}")
+        sys.exit(1)
+    if resp.status_code == 401:
+        print(f"错误：API Key 无效或未授权，请检查 EVA_API_KEY 配置。")
+        sys.exit(1)
+    if resp.status_code != 200:
+        print(f"错误：获取模型列表失败（HTTP {resp.status_code}）：{resp.text[:200]}")
+        sys.exit(1)
     out = resp.json()
     for d in out['data']:
         if d['id'] == EVA_MODEL_NAME:
@@ -30,7 +42,9 @@ def detect_model_len():
                 return d['max_model_len']
             else:
                 return 256_000
-    raise Exception(f"{EVA_MODEL_NAME} not found")
+    print(f"错误：在 {EVA_BASE_URL} 上未找到模型 '{EVA_MODEL_NAME}'，请检查 EVA_MODEL_NAME 配置。")
+    print(f"可用模型：{[d['id'] for d in out.get('data', [])]}")
+    sys.exit(1)
 
 
 # ========================= EVA配置区 =========================
