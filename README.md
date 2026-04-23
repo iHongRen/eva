@@ -77,7 +77,10 @@ hints.md文件内容示例：
 
 在 EVA  中输入一段话并提交后，数据会经过以下完整流程：
 
-![](./res/flow_animation.mp4)
+
+
+https://github.com/user-attachments/assets/4df7cbf6-5729-4fbf-abce-cf331cb3413f
+
 
 
 
