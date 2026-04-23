@@ -376,7 +376,7 @@ def llm_chat_stream(messages, tools=None, temperature=0.6, thinking=True):
             if not delta:
                 continue
 
-            if 'role' in delta:
+            if 'role' in delta and delta['role']:
                 role = delta['role']
 
             # ---- reasoning / thinking 内容 ----
@@ -402,7 +402,7 @@ def llm_chat_stream(messages, tools=None, temperature=0.6, thinking=True):
                 content_parts.append(text)
 
             # ---- tool_calls 增量 ----
-            if 'tool_calls' in delta:
+            if 'tool_calls' in delta and delta['tool_calls']:
                 for tc_delta in delta['tool_calls']:
                     idx = tc_delta.get('index', 0)
                     if idx not in tool_calls_map:

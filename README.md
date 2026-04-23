@@ -73,6 +73,14 @@ hints.md文件内容示例：
 通过 Skill & Command，可以扩展EVA的各种能力。
 
 
+## 原理动画演示
+
+在 EVA  中输入一段话并提交后，数据会经过以下完整流程：
+
+![](./res/flow_animation.mp4)
+
+
+
 ## 关于Contribution
 
 💗💗💗
